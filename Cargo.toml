@@ -1,0 +1,17 @@
+[package]
+name = "rattunnel"
+version = "0.1.0"
+edition = "2021"
+description = "A terminal file/directory picker widget for ratatui"
+license = "MIT"
+keywords = ["tui", "ratatui", "file-picker", "directory", "widget"]
+categories = ["command-line-interface"]
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+dirs = "5"
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
