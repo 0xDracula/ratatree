@@ -1,4 +1,5 @@
 mod entry;
+mod event;
 mod search;
 mod state;
 mod theme;

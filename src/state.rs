@@ -339,10 +339,10 @@ impl FilePickerState {
         self.clamp_cursor();
     }
 
-    // --- Event handling placeholder (implemented in Task 6) ---
+    // --- Event handling ---
 
-    pub fn handle_event(&mut self, _event: crossterm::event::Event) {
-        // Implemented in Task 6
+    pub fn handle_event(&mut self, event: crossterm::event::Event) {
+        crate::event::handle_event(self, event);
     }
 }
 
