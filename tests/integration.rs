@@ -1,7 +1,7 @@
 use std::fs;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
-use rattunnel::{FilePickerState, PickerMode, PickerResult};
+use ratatree::{FilePickerState, PickerMode, PickerResult};
 
 fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -201,7 +201,7 @@ fn search_and_confirm() {
 
     // Enter search mode
     state.handle_event(key_char('/'));
-    assert_eq!(state.common.input_mode, rattunnel::InputMode::Search);
+    assert_eq!(state.common.input_mode, ratatree::InputMode::Search);
 
     // Type "Car"
     state.handle_event(key_char('C'));
@@ -220,7 +220,7 @@ fn search_and_confirm() {
 
     // Press Enter to exit search (keep filter)
     state.handle_event(key(KeyCode::Enter));
-    assert_eq!(state.common.input_mode, rattunnel::InputMode::Normal);
+    assert_eq!(state.common.input_mode, ratatree::InputMode::Normal);
     assert_eq!(state.visible_count(), 1, "filter should be preserved after Enter");
 
     // Press Enter again to confirm selection
@@ -250,7 +250,7 @@ fn files_only_mode_blocks_dir_selection() {
 
     // First entry should be src/ (a directory)
     let first = state.current_entry().expect("should have entry");
-    assert_eq!(first.kind, rattunnel::EntryKind::Directory, "first entry should be a dir");
+    assert_eq!(first.kind, ratatree::EntryKind::Directory, "first entry should be a dir");
 
     // Attempt to select via Space
     state.handle_event(key_char(' '));
@@ -301,7 +301,7 @@ fn symlink_cycle_detection() {
         .into_iter()
         .find(|e| e.name == "self_link")
         .expect("self_link should be visible");
-    assert_eq!(self_link_entry.kind, rattunnel::EntryKind::Symlink);
+    assert_eq!(self_link_entry.kind, ratatree::EntryKind::Symlink);
 
     // Navigate to self_link
     let link_idx = state

@@ -1,12 +1,12 @@
 [package]
-name = "rattunnel"
+name = "ratatree"
 version = "0.1.0"
 edition = "2021"
 description = "A terminal file/directory picker widget for ratatui"
 license = "MIT"
-repository = "https://github.com/namil-k/rattunnel"
-homepage = "https://github.com/namil-k/rattunnel"
-documentation = "https://docs.rs/rattunnel"
+repository = "https://github.com/namil-k/ratatree"
+homepage = "https://github.com/namil-k/ratatree"
+documentation = "https://docs.rs/ratatree"
 readme = "README.md"
 keywords = ["tui", "ratatui", "file-picker", "directory", "widget"]
 categories = ["command-line-interface"]

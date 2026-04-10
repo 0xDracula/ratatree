@@ -1,4 +1,4 @@
-# rattunnel
+# ratatree
 
 A file and directory picker widget for [ratatui](https://github.com/ratatui/ratatui).
 
@@ -6,7 +6,7 @@ Drop it into any ratatui app. Your users get a full-featured file browser with k
 
 ```
 ┌─────────────────────────────────────────┐
-│ ~/projects/rattunnel/src                │
+│ ~/projects/ratatree/src                │
 │─────────────────────────────────────────│
 │   📁 view/                              │
 │ ▸ 📄 lib.rs                             │
@@ -23,7 +23,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rattunnel = { git = "https://github.com/namil-k/rattunnel.git" }
+ratatree = { git = "https://github.com/namil-k/ratatree.git" }
 ```
 
 Three things to know:
@@ -33,7 +33,7 @@ Three things to know:
 3. **`PickerResult`** tells you what the user did (still browsing, picked files, or cancelled)
 
 ```rust
-use rattunnel::{FilePicker, FilePickerState, PickerMode, PickerResult};
+use ratatree::{FilePicker, FilePickerState, PickerMode, PickerResult};
 
 // Create the picker
 let mut state = FilePickerState::builder()
@@ -131,7 +131,7 @@ let mut state = FilePickerState::builder()
 Every visual element is customizable:
 
 ```rust
-use rattunnel::FilePickerTheme;
+use ratatree::FilePickerTheme;
 use ratatui::style::{Color, Modifier, Style};
 
 let theme = FilePickerTheme {

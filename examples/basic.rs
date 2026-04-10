@@ -8,7 +8,7 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use rattunnel::{FilePicker, FilePickerState, PickerResult};
+use ratatree::{FilePicker, FilePickerState, PickerResult};
 
 fn main() -> io::Result<()> {
     enable_raw_mode()?;
