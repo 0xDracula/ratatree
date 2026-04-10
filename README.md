@@ -23,7 +23,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rattunnel = { git = "https://github.com/namilkim/rattunnel.git" }
+rattunnel = { git = "https://github.com/namil-k/rattunnel.git" }
 ```
 
 Three things to know:
