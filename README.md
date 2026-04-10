@@ -1,0 +1,210 @@
+# rattunnel
+
+A file and directory picker widget for [ratatui](https://github.com/ratatui/ratatui).
+
+Drop it into any ratatui app. Your users get a full-featured file browser with keyboard navigation, fuzzy search, multi-select, and two view modes - all from a single widget.
+
+```
+┌─────────────────────────────────────────┐
+│ ~/projects/rattunnel/src                │
+│─────────────────────────────────────────│
+│   📁 view/                              │
+│ ▸ 📄 lib.rs                             │
+│   ✓ 📄 state.rs                         │
+│   🔗 config -> ../config                │
+│─────────────────────────────────────────│
+│ 1 selected | . hidden | / search        │
+└─────────────────────────────────────────┘
+```
+
+## Quick Start
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+rattunnel = { git = "https://github.com/namilkim/rattunnel.git" }
+```
+
+Three things to know:
+
+1. **`FilePickerState`** holds all the state (current directory, cursor, selections)
+2. **`FilePicker`** renders it (implements ratatui's `StatefulWidget`)
+3. **`PickerResult`** tells you what the user did (still browsing, picked files, or cancelled)
+
+```rust
+use rattunnel::{FilePicker, FilePickerState, PickerMode, PickerResult};
+
+// Create the picker
+let mut state = FilePickerState::builder()
+    .start_dir("~/projects")
+    .mode(PickerMode::Both)       // files and directories
+    .build();
+
+// In your event loop:
+loop {
+    terminal.draw(|f| {
+        f.render_stateful_widget(FilePicker::default(), f.area(), &mut state);
+    })?;
+
+    if let Event::Key(key) = crossterm::event::read()? {
+        state.handle_event(Event::Key(key));
+    }
+
+    match state.result() {
+        PickerResult::Selected(paths) => {
+            // User picked these files/directories
+            break;
+        }
+        PickerResult::Cancelled => break,
+        PickerResult::Pending => {}
+    }
+}
+```
+
+## Features
+
+- **List and Tree views** - toggle with `Tab`
+- **Vim keybindings** - `hjkl`, `gg`, `G`, `Ctrl+D/U` (arrow keys too)
+- **Fuzzy search** - press `/` and start typing
+- **Multi-select** - `Space` to toggle, `Enter` to confirm
+- **Hidden files** - toggle with `.`
+- **Symlink support** - follows symlinks with circular reference detection
+- **Filter callback** - show only the files you want
+- **Themeable** - customize every color via `FilePickerTheme`
+
+## Builder Options
+
+```rust
+let mut state = FilePickerState::builder()
+    .start_dir("~/Documents")           // starting directory (default: ".")
+    .mode(PickerMode::FilesOnly)        // FilesOnly | DirsOnly | Both
+    .view(ViewMode::Tree)               // List | Tree (default: List)
+    .show_hidden(true)                  // show dotfiles (default: false)
+    .filter(|path| {                    // custom filter
+        path.extension()
+            .map(|e| e == "rs" || e == "toml")
+            .unwrap_or(true)            // always show directories
+    })
+    .theme(my_theme)                    // custom FilePickerTheme
+    .build();
+```
+
+## Key Bindings
+
+### Navigation
+
+| Key | Action |
+|---|---|
+| `j` / `Down` | Move cursor down |
+| `k` / `Up` | Move cursor up |
+| `l` / `Right` | Enter directory |
+| `h` / `Left` / `Backspace` | Go to parent directory |
+| `gg` | Jump to top |
+| `G` | Jump to bottom |
+| `Ctrl+D` | Half page down |
+| `Ctrl+U` | Half page up |
+| `~` | Go to home directory |
+
+### Actions
+
+| Key | Action |
+|---|---|
+| `Enter` | Confirm selection (or enter directory) |
+| `Space` | Toggle multi-select on current item |
+| `Esc` / `q` | Cancel |
+| `Tab` | Switch between List and Tree view |
+| `.` | Toggle hidden files |
+| `/` | Start fuzzy search |
+
+### Search Mode
+
+| Key | Action |
+|---|---|
+| Type | Filter entries in real time |
+| `Enter` | Accept filter, return to normal mode |
+| `Esc` | Clear filter, return to normal mode |
+| `j/k` / `Up/Down` | Navigate within results |
+
+## Theming
+
+Every visual element is customizable:
+
+```rust
+use rattunnel::FilePickerTheme;
+use ratatui::style::{Color, Modifier, Style};
+
+let theme = FilePickerTheme {
+    normal: Style::default(),
+    cursor: Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD),
+    selected: Style::default().fg(Color::Green),
+    directory: Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+    symlink: Style::default().fg(Color::Cyan),
+    path_bar: Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+    status_bar: Style::default().fg(Color::DarkGray),
+    search_input: Style::default().fg(Color::Yellow),
+    error: Style::default().fg(Color::Red),
+};
+
+let mut state = FilePickerState::builder()
+    .theme(theme)
+    .build();
+```
+
+## Integration with Your App
+
+A common pattern is to show the picker as a modal overlay:
+
+```rust
+struct App {
+    picker_state: Option<FilePickerState>,
+    // ... your app state
+}
+
+impl App {
+    fn open_picker(&mut self) {
+        self.picker_state = Some(
+            FilePickerState::builder()
+                .start_dir(".")
+                .mode(PickerMode::FilesOnly)
+                .build()
+        );
+    }
+
+    fn handle_event(&mut self, event: Event) {
+        if let Some(picker) = &mut self.picker_state {
+            picker.handle_event(event);
+            match picker.result() {
+                PickerResult::Selected(paths) => {
+                    self.on_files_selected(paths);
+                    self.picker_state = None;
+                }
+                PickerResult::Cancelled => {
+                    self.picker_state = None;
+                }
+                PickerResult::Pending => {}
+            }
+        } else {
+            // your normal event handling
+        }
+    }
+
+    fn render(&mut self, frame: &mut Frame) {
+        if let Some(picker) = &mut self.picker_state {
+            frame.render_stateful_widget(FilePicker::default(), frame.area(), picker);
+        } else {
+            // your normal rendering
+        }
+    }
+}
+```
+
+## Running the Example
+
+```bash
+cargo run --example basic
+```
+
+## License
+
+MIT

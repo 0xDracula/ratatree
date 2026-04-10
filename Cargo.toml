@@ -4,8 +4,13 @@ version = "0.1.0"
 edition = "2021"
 description = "A terminal file/directory picker widget for ratatui"
 license = "MIT"
+repository = "https://github.com/namilkim/rattunnel"
+homepage = "https://github.com/namilkim/rattunnel"
+documentation = "https://docs.rs/rattunnel"
+readme = "README.md"
 keywords = ["tui", "ratatui", "file-picker", "directory", "widget"]
 categories = ["command-line-interface"]
+exclude = ["docs/", ".superpowers/"]
 
 [dependencies]
 ratatui = "0.29"
