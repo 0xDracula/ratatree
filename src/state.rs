@@ -1,0 +1,632 @@
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use crate::entry::{read_entries, Entry, EntryKind};
+use crate::theme::FilePickerTheme;
+use crate::view::{ListViewState, TreeViewState, ViewState};
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerMode {
+    FilesOnly,
+    DirsOnly,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    List,
+    Tree,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickerResult {
+    Pending,
+    Selected(Vec<PathBuf>),
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Normal,
+    Search,
+}
+
+// ---------------------------------------------------------------------------
+// CommonState
+// ---------------------------------------------------------------------------
+
+pub struct CommonState {
+    pub current_dir: PathBuf,
+    pub entries: Vec<Entry>,
+    pub filtered_indices: Option<Vec<usize>>,
+    pub selected: HashSet<PathBuf>,
+    pub show_hidden: bool,
+    pub mode: PickerMode,
+    pub input_mode: InputMode,
+    pub search_query: String,
+    pub visited_dirs: HashSet<PathBuf>,
+    pub pending_key: Option<(char, Instant)>,
+    pub error_message: Option<String>,
+    pub result: PickerResult,
+    pub filter: Option<Box<dyn Fn(&Path) -> bool>>,
+    pub theme: FilePickerTheme,
+}
+
+// Manual Debug because filter is not Debug.
+impl std::fmt::Debug for CommonState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommonState")
+            .field("current_dir", &self.current_dir)
+            .field("entries_len", &self.entries.len())
+            .field("filtered_indices", &self.filtered_indices)
+            .field("selected", &self.selected)
+            .field("show_hidden", &self.show_hidden)
+            .field("mode", &self.mode)
+            .field("input_mode", &self.input_mode)
+            .field("search_query", &self.search_query)
+            .field("result", &self.result)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FilePickerState
+// ---------------------------------------------------------------------------
+
+pub struct FilePickerState {
+    pub common: CommonState,
+    pub view: ViewState,
+}
+
+impl FilePickerState {
+    pub fn builder() -> FilePickerBuilder {
+        FilePickerBuilder::default()
+    }
+
+    // --- Result ---
+
+    pub fn result(&self) -> PickerResult {
+        self.common.result.clone()
+    }
+
+    // --- Visible entries helpers ---
+
+    pub fn visible_entries(&self) -> Vec<&Entry> {
+        match &self.common.filtered_indices {
+            Some(indices) => indices
+                .iter()
+                .filter_map(|&i| self.common.entries.get(i))
+                .collect(),
+            None => self.common.entries.iter().collect(),
+        }
+    }
+
+    pub fn visible_count(&self) -> usize {
+        match &self.common.filtered_indices {
+            Some(indices) => indices.len(),
+            None => self.common.entries.len(),
+        }
+    }
+
+    fn actual_index(&self, visible_idx: usize) -> Option<usize> {
+        match &self.common.filtered_indices {
+            Some(indices) => indices.get(visible_idx).copied(),
+            None => {
+                if visible_idx < self.common.entries.len() {
+                    Some(visible_idx)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn current_entry(&self) -> Option<&Entry> {
+        let cursor = self.view.cursor();
+        let actual = self.actual_index(cursor)?;
+        self.common.entries.get(actual)
+    }
+
+    // --- Directory refresh ---
+
+    pub fn refresh_entries(&mut self) {
+        self.common.entries = read_entries(
+            &self.common.current_dir.clone(),
+            self.common.show_hidden,
+            self.common.filter.as_deref(),
+        );
+        self.common.filtered_indices = None;
+        self.clamp_cursor();
+    }
+
+    // --- Toggles ---
+
+    pub fn toggle_hidden(&mut self) {
+        self.common.show_hidden = !self.common.show_hidden;
+        self.refresh_entries();
+    }
+
+    pub fn toggle_select(&mut self) {
+        let entry = match self.current_entry() {
+            Some(e) => e,
+            None => return,
+        };
+        let kind = entry.kind.clone();
+        let path = entry.path.clone();
+
+        match self.common.mode {
+            PickerMode::FilesOnly => {
+                if kind == EntryKind::Directory {
+                    return;
+                }
+            }
+            PickerMode::DirsOnly => {
+                if kind == EntryKind::File {
+                    return;
+                }
+            }
+            PickerMode::Both => {}
+        }
+
+        if self.common.selected.contains(&path) {
+            self.common.selected.remove(&path);
+        } else {
+            self.common.selected.insert(path);
+        }
+    }
+
+    // --- Confirm / Cancel ---
+
+    pub fn confirm(&mut self) {
+        if !self.common.selected.is_empty() {
+            let mut paths: Vec<PathBuf> = self.common.selected.iter().cloned().collect();
+            paths.sort();
+            self.common.result = PickerResult::Selected(paths);
+            return;
+        }
+
+        match self.current_entry() {
+            Some(entry) if entry.kind == EntryKind::Directory => {
+                self.enter_directory();
+            }
+            Some(entry) => {
+                let path = entry.path.clone();
+                self.common.result = PickerResult::Selected(vec![path]);
+            }
+            None => {}
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        self.common.result = PickerResult::Cancelled;
+    }
+
+    // --- Directory navigation ---
+
+    pub fn enter_directory(&mut self) {
+        let entry = match self.current_entry() {
+            Some(e) => e,
+            None => return,
+        };
+
+        let is_dir;
+        let canonical;
+
+        match entry.kind {
+            EntryKind::Directory => {
+                canonical = match entry.path.canonicalize() {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
+                is_dir = true;
+            }
+            EntryKind::Symlink => {
+                canonical = match entry.path.canonicalize() {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
+                is_dir = canonical.is_dir();
+            }
+            EntryKind::File => return,
+        }
+
+        if !is_dir {
+            return;
+        }
+
+        if self.common.visited_dirs.contains(&canonical) {
+            self.common.error_message = Some("Circular symlink".to_string());
+            return;
+        }
+
+        self.common.visited_dirs.insert(canonical.clone());
+        self.common.current_dir = canonical;
+        *self.view.cursor_mut() = 0;
+        *self.view.scroll_offset_mut() = 0;
+        self.refresh_entries();
+    }
+
+    pub fn go_parent(&mut self) {
+        if let Some(parent) = self.common.current_dir.parent().map(|p| p.to_path_buf()) {
+            self.common.current_dir = parent;
+            *self.view.cursor_mut() = 0;
+            *self.view.scroll_offset_mut() = 0;
+            self.refresh_entries();
+        }
+    }
+
+    pub fn go_home(&mut self) {
+        if let Some(home) = dirs::home_dir() {
+            self.common.current_dir = home;
+            *self.view.cursor_mut() = 0;
+            *self.view.scroll_offset_mut() = 0;
+            self.refresh_entries();
+        }
+    }
+
+    // --- Cursor movement ---
+
+    pub fn move_cursor_down(&mut self) {
+        let count = self.visible_count();
+        if count == 0 {
+            return;
+        }
+        let cursor = self.view.cursor_mut();
+        if *cursor + 1 < count {
+            *cursor += 1;
+        }
+    }
+
+    pub fn move_cursor_up(&mut self) {
+        let cursor = self.view.cursor_mut();
+        if *cursor > 0 {
+            *cursor -= 1;
+        }
+    }
+
+    pub fn move_to_top(&mut self) {
+        *self.view.cursor_mut() = 0;
+    }
+
+    pub fn move_to_bottom(&mut self) {
+        let count = self.visible_count();
+        if count > 0 {
+            *self.view.cursor_mut() = count - 1;
+        }
+    }
+
+    pub fn move_half_page_down(&mut self, page_height: usize) {
+        let half = page_height / 2;
+        let count = self.visible_count();
+        if count == 0 {
+            return;
+        }
+        let cursor = self.view.cursor_mut();
+        *cursor = (*cursor + half).min(count - 1);
+    }
+
+    pub fn move_half_page_up(&mut self, page_height: usize) {
+        let half = page_height / 2;
+        let cursor = self.view.cursor_mut();
+        *cursor = cursor.saturating_sub(half);
+    }
+
+    // --- View toggle ---
+
+    pub fn toggle_view(&mut self) {
+        let old = self.view.clone();
+        self.view = old.toggle();
+    }
+
+    // --- Cursor clamping ---
+
+    fn clamp_cursor(&mut self) {
+        let count = self.visible_count();
+        let cursor = self.view.cursor_mut();
+        if count == 0 {
+            *cursor = 0;
+        } else if *cursor >= count {
+            *cursor = count - 1;
+        }
+    }
+
+    pub fn clamp_cursor_pub(&mut self) {
+        self.clamp_cursor();
+    }
+
+    // --- Event handling placeholder (implemented in Task 6) ---
+
+    pub fn handle_event(&mut self, _event: crossterm::event::Event) {
+        // Implemented in Task 6
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Builder
+// ---------------------------------------------------------------------------
+
+pub struct FilePickerBuilder {
+    start_dir: Option<PathBuf>,
+    mode: PickerMode,
+    view_mode: ViewMode,
+    filter: Option<Box<dyn Fn(&Path) -> bool>>,
+    theme: FilePickerTheme,
+    show_hidden: bool,
+}
+
+impl Default for FilePickerBuilder {
+    fn default() -> Self {
+        Self {
+            start_dir: None,
+            mode: PickerMode::Both,
+            view_mode: ViewMode::List,
+            filter: None,
+            theme: FilePickerTheme::default(),
+            show_hidden: false,
+        }
+    }
+}
+
+impl FilePickerBuilder {
+    pub fn start_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.start_dir = Some(dir.into());
+        self
+    }
+
+    pub fn mode(mut self, mode: PickerMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    pub fn view(mut self, view_mode: ViewMode) -> Self {
+        self.view_mode = view_mode;
+        self
+    }
+
+    pub fn filter(mut self, f: impl Fn(&Path) -> bool + 'static) -> Self {
+        self.filter = Some(Box::new(f));
+        self
+    }
+
+    pub fn theme(mut self, theme: FilePickerTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub fn show_hidden(mut self, show: bool) -> Self {
+        self.show_hidden = show;
+        self
+    }
+
+    pub fn build(self) -> FilePickerState {
+        let current_dir = self
+            .start_dir
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+
+        let entries = read_entries(
+            &current_dir,
+            self.show_hidden,
+            self.filter.as_deref(),
+        );
+
+        let view = match self.view_mode {
+            ViewMode::List => ViewState::List(ListViewState::new()),
+            ViewMode::Tree => ViewState::Tree(TreeViewState::new()),
+        };
+
+        let common = CommonState {
+            current_dir,
+            entries,
+            filtered_indices: None,
+            selected: HashSet::new(),
+            show_hidden: self.show_hidden,
+            mode: self.mode,
+            input_mode: InputMode::Normal,
+            search_query: String::new(),
+            visited_dirs: HashSet::new(),
+            pending_key: None,
+            error_message: None,
+            result: PickerResult::Pending,
+            filter: self.filter,
+            theme: self.theme,
+        };
+
+        FilePickerState { common, view }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn make_dir_with_files() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("alpha.txt"), b"").unwrap();
+        fs::write(dir.path().join("beta.rs"), b"").unwrap();
+        fs::create_dir(dir.path().join("subdir")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn builder_defaults() {
+        let dir = make_dir_with_files();
+        let state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .build();
+
+        assert_eq!(state.common.mode, PickerMode::Both);
+        assert!(!state.common.show_hidden);
+        assert_eq!(state.common.result, PickerResult::Pending);
+        assert!(matches!(state.view, ViewState::List(_)));
+        assert_eq!(state.common.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn builder_with_tree_view() {
+        let dir = make_dir_with_files();
+        let state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .view(ViewMode::Tree)
+            .build();
+
+        assert!(matches!(state.view, ViewState::Tree(_)));
+    }
+
+    #[test]
+    fn builder_with_filter() {
+        let dir = make_dir_with_files();
+        let state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("txt"))
+            .build();
+
+        // Only alpha.txt and subdir (dirs pass the filter always) should be present
+        let names: Vec<&str> = state.common.entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"alpha.txt"), "alpha.txt should be included");
+        assert!(!names.contains(&"beta.rs"), "beta.rs should be filtered out");
+        assert!(names.contains(&"subdir"), "dirs always pass filter");
+    }
+
+    #[test]
+    fn picker_mode_files_only() {
+        let dir = make_dir_with_files();
+        let mut state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .mode(PickerMode::FilesOnly)
+            .build();
+
+        // Move cursor to a directory entry (dirs come first after sorting)
+        // First entry is "subdir" (Directory), attempt to select it
+        *state.view.cursor_mut() = 0;
+        // Make sure first entry is a directory
+        let first_kind = state.current_entry().map(|e| e.kind.clone());
+        assert_eq!(first_kind, Some(EntryKind::Directory));
+
+        state.toggle_select();
+        assert!(state.common.selected.is_empty(), "should not select a directory in FilesOnly mode");
+    }
+
+    #[test]
+    fn toggle_hidden() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("visible.txt"), b"").unwrap();
+        fs::write(dir.path().join(".hidden.txt"), b"").unwrap();
+
+        let mut state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .build();
+
+        assert_eq!(state.visible_count(), 1);
+
+        state.toggle_hidden();
+        assert_eq!(state.visible_count(), 2);
+
+        state.toggle_hidden();
+        assert_eq!(state.visible_count(), 1);
+    }
+
+    #[test]
+    fn multi_select_toggle() {
+        let dir = make_dir_with_files();
+        let mut state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .build();
+
+        // Find a file entry (not directory)
+        let file_idx = state
+            .common
+            .entries
+            .iter()
+            .position(|e| e.kind == EntryKind::File)
+            .expect("should have a file entry");
+        *state.view.cursor_mut() = file_idx;
+
+        state.toggle_select();
+        assert_eq!(state.common.selected.len(), 1);
+
+        // Toggle same entry again - should deselect
+        state.toggle_select();
+        assert_eq!(state.common.selected.len(), 0);
+    }
+
+    #[test]
+    fn confirm_returns_cursor_when_no_selection() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("only_file.txt"), b"").unwrap();
+
+        let mut state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .build();
+
+        // Cursor is at a file with empty selected set
+        *state.view.cursor_mut() = 0;
+        state.confirm();
+
+        match state.result() {
+            PickerResult::Selected(paths) => {
+                assert_eq!(paths.len(), 1);
+                assert!(paths[0].ends_with("only_file.txt"));
+            }
+            other => panic!("expected Selected, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn confirm_returns_selected_set() {
+        let dir = make_dir_with_files();
+        let mut state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .build();
+
+        // Select two files
+        let file_indices: Vec<usize> = state
+            .common
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.kind == EntryKind::File)
+            .map(|(i, _)| i)
+            .collect();
+
+        assert!(file_indices.len() >= 2, "need at least 2 files for this test");
+
+        *state.view.cursor_mut() = file_indices[0];
+        state.toggle_select();
+        *state.view.cursor_mut() = file_indices[1];
+        state.toggle_select();
+
+        assert_eq!(state.common.selected.len(), 2);
+
+        state.confirm();
+
+        match state.result() {
+            PickerResult::Selected(paths) => {
+                assert_eq!(paths.len(), 2);
+            }
+            other => panic!("expected Selected, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cancel_returns_cancelled() {
+        let dir = make_dir_with_files();
+        let mut state = FilePickerState::builder()
+            .start_dir(dir.path())
+            .build();
+
+        assert_eq!(state.result(), PickerResult::Pending);
+        state.cancel();
+        assert_eq!(state.result(), PickerResult::Cancelled);
+    }
+}
