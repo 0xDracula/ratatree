@@ -1,6 +1,6 @@
 // Tree view rendering - implemented in Task 9
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::entry::{read_entries, Entry, EntryKind};
 use super::TreeViewState;
@@ -57,6 +57,7 @@ impl TreeViewState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::fs;
     use tempfile::TempDir;
 

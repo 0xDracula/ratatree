@@ -6,6 +6,9 @@ use crate::entry::{read_entries, Entry, EntryKind};
 use crate::theme::FilePickerTheme;
 use crate::view::{ListViewState, TreeViewState, ViewState};
 
+/// Type alias for an optional boxed filter predicate to avoid type complexity warnings.
+pub type FilterFn = Option<Box<dyn Fn(&Path) -> bool>>;
+
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
@@ -53,7 +56,7 @@ pub struct CommonState {
     pub pending_key: Option<(char, Instant)>,
     pub error_message: Option<String>,
     pub result: PickerResult,
-    pub filter: Option<Box<dyn Fn(&Path) -> bool>>,
+    pub filter: FilterFn,
     pub theme: FilePickerTheme,
 }
 
@@ -354,7 +357,7 @@ pub struct FilePickerBuilder {
     start_dir: Option<PathBuf>,
     mode: PickerMode,
     view_mode: ViewMode,
-    filter: Option<Box<dyn Fn(&Path) -> bool>>,
+    filter: FilterFn,
     theme: FilePickerTheme,
     show_hidden: bool,
 }

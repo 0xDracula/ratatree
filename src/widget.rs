@@ -8,14 +8,9 @@ use crate::entry::EntryKind;
 use crate::state::{FilePickerState, InputMode};
 use crate::view::ViewState;
 
+#[derive(Default)]
 pub struct FilePicker {
     block: Option<Block<'static>>,
-}
-
-impl Default for FilePicker {
-    fn default() -> Self {
-        Self { block: None }
-    }
 }
 
 impl FilePicker {

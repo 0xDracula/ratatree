@@ -10,6 +10,12 @@ pub struct ListViewState {
     pub scroll_offset: usize,
 }
 
+impl Default for ListViewState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ListViewState {
     pub fn new() -> Self {
         Self {
@@ -24,6 +30,12 @@ pub struct TreeViewState {
     pub cursor: usize,
     pub scroll_offset: usize,
     pub expanded: HashSet<PathBuf>,
+}
+
+impl Default for TreeViewState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TreeViewState {
